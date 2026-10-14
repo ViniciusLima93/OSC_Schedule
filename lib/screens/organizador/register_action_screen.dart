@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/app_state.dart';
+import '../../widgets/remote_content.dart';
 
 class RegisterActionScreen extends StatefulWidget {
   const RegisterActionScreen({super.key});
@@ -19,6 +20,8 @@ class _RegisterActionScreenState extends State<RegisterActionScreen> {
   final _slotsController = TextEditingController();
   final _documentsController = TextEditingController();
   DateTime? _selectedDate;
+  TimeOfDay? _selectedTime;
+  bool _submitting = false;
 
   @override
   void dispose() {
@@ -70,18 +73,44 @@ class _RegisterActionScreenState extends State<RegisterActionScreen> {
               validator: (v) => (v == null || v.trim().isEmpty) ? 'Informe o local' : null,
             ),
             const SizedBox(height: 12),
-            InkWell(
-              onTap: _pickDate,
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Data',
-                  border: OutlineInputBorder(),
-                  suffixIcon: Icon(Icons.calendar_today),
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: _pickDate,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Data',
+                        border: OutlineInputBorder(),
+                        suffixIcon: Icon(Icons.calendar_today),
+                      ),
+                      child: Text(
+                        _selectedDate == null
+                            ? 'Selecionar data'
+                            : dateFormat.format(_selectedDate!),
+                      ),
+                    ),
+                  ),
                 ),
-                child: Text(
-                  _selectedDate == null ? 'Selecionar data' : dateFormat.format(_selectedDate!),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: InkWell(
+                    onTap: _pickTime,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Horário',
+                        border: OutlineInputBorder(),
+                        suffixIcon: Icon(Icons.access_time),
+                      ),
+                      child: Text(
+                        _selectedTime == null
+                            ? 'Selecionar'
+                            : _selectedTime!.format(context),
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
             const SizedBox(height: 12),
             TextFormField(
@@ -110,8 +139,14 @@ class _RegisterActionScreenState extends State<RegisterActionScreen> {
             ),
             const SizedBox(height: 24),
             FilledButton.icon(
-              onPressed: () => _submit(context),
-              icon: const Icon(Icons.check),
+              onPressed: _submitting ? null : () => _submit(context),
+              icon: _submitting
+                  ? const SizedBox(
+                      height: 18,
+                      width: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.check),
               label: const Padding(
                 padding: EdgeInsets.symmetric(vertical: 12),
                 child: Text('Cadastrar ação social'),
@@ -135,11 +170,21 @@ class _RegisterActionScreenState extends State<RegisterActionScreen> {
     }
   }
 
-  void _submit(BuildContext context) {
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _selectedTime ?? const TimeOfDay(hour: 9, minute: 0),
+    );
+    if (picked != null) {
+      setState(() => _selectedTime = picked);
+    }
+  }
+
+  Future<void> _submit(BuildContext context) async {
     if (!_formKey.currentState!.validate()) return;
-    if (_selectedDate == null) {
+    if (_selectedDate == null || _selectedTime == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecione uma data para a ação social')),
+        const SnackBar(content: Text('Selecione a data e o horário da ação social')),
       );
       return;
     }
@@ -149,15 +194,31 @@ class _RegisterActionScreenState extends State<RegisterActionScreen> {
         .map((d) => d.trim())
         .where((d) => d.isNotEmpty)
         .toList();
+    final dateTime = DateTime(
+      _selectedDate!.year,
+      _selectedDate!.month,
+      _selectedDate!.day,
+      _selectedTime!.hour,
+      _selectedTime!.minute,
+    );
 
-    context.read<AppState>().registerAction(
-          title: _titleController.text.trim(),
-          description: _descriptionController.text.trim(),
-          location: _locationController.text.trim(),
-          dateTime: _selectedDate!,
-          totalSlots: int.parse(_slotsController.text),
-          requiredDocuments: documents,
-        );
+    setState(() => _submitting = true);
+    try {
+      await context.read<AppState>().registerAction(
+            title: _titleController.text.trim(),
+            description: _descriptionController.text.trim(),
+            location: _locationController.text.trim(),
+            dateTime: dateTime,
+            totalSlots: int.parse(_slotsController.text),
+            requiredDocuments: documents,
+          );
+    } catch (e) {
+      if (context.mounted) showErrorSnackBar(context, e);
+      return;
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+    if (!context.mounted) return;
 
     _formKey.currentState!.reset();
     _titleController.clear();
@@ -165,7 +226,10 @@ class _RegisterActionScreenState extends State<RegisterActionScreen> {
     _locationController.clear();
     _slotsController.clear();
     _documentsController.clear();
-    setState(() => _selectedDate = null);
+    setState(() {
+      _selectedDate = null;
+      _selectedTime = null;
+    });
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Ação social cadastrada com sucesso!')),

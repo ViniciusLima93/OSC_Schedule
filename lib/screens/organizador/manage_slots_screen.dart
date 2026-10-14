@@ -3,24 +3,38 @@ import 'package:provider/provider.dart';
 
 import '../../models/social_action.dart';
 import '../../state/app_state.dart';
+import '../../widgets/remote_content.dart';
 
 class ManageSlotsScreen extends StatelessWidget {
   const ManageSlotsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final actions = context.watch<AppState>().actions;
+    final appState = context.watch<AppState>();
+    final actions = appState.myActions;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Gerenciar vagas')),
-      body: actions.isEmpty
-          ? const Center(child: Text('Nenhuma ação social cadastrada.'))
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: actions.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, index) => _SlotsCard(action: actions[index]),
-            ),
+      appBar: AppBar(
+        title: const Text('Gerenciar vagas'),
+        actions: [
+          IconButton(
+            tooltip: 'Atualizar',
+            onPressed: appState.refresh,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: RemoteContent(
+        isEmpty: actions.isEmpty,
+        emptyMessage: 'Nenhuma ação social cadastrada.',
+        child: ListView.separated(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          itemCount: actions.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, index) => _SlotsCard(action: actions[index]),
+        ),
+      ),
     );
   }
 }
@@ -33,6 +47,14 @@ class _SlotsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = context.read<AppState>();
+
+    Future<void> update(int total) async {
+      try {
+        await appState.updateSlots(action.id, total);
+      } catch (e) {
+        if (context.mounted) showErrorSnackBar(context, e);
+      }
+    }
 
     return Card(
       child: Padding(
@@ -53,15 +75,16 @@ class _SlotsCard extends StatelessWidget {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.remove_circle_outline),
-                      onPressed: action.totalSlots <= action.bookedSlots
+                      onPressed: action.totalSlots <= action.bookedSlots ||
+                              action.totalSlots <= 1
                           ? null
-                          : () => appState.updateSlots(action.id, action.totalSlots - 1),
+                          : () => update(action.totalSlots - 1),
                     ),
                     Text('${action.totalSlots}',
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                     IconButton(
                       icon: const Icon(Icons.add_circle_outline),
-                      onPressed: () => appState.updateSlots(action.id, action.totalSlots + 1),
+                      onPressed: () => update(action.totalSlots + 1),
                     ),
                   ],
                 ),

@@ -1,23 +1,43 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/app_notification.dart';
+import '../models/app_user.dart';
 import '../models/appointment.dart';
 import '../models/social_action.dart';
+import '../services/api_client.dart';
 
 class AppState extends ChangeNotifier {
-  AppState() {
-    _seedData();
-  }
+  AppState({ApiClient? api}) : api = api ?? ApiClient();
 
-  final List<SocialAction> _actions = [];
-  final List<Appointment> _appointments = [];
+  final ApiClient api;
+
+  List<AppUser> _users = [];
+  AppUser? _currentUser;
+  List<SocialAction> _actions = [];
+  List<Appointment> _appointments = [];
   final List<AppNotification> _notifications = [];
+
+  bool _loading = false;
+  String? _error;
 
   int _idCounter = 0;
   String _nextId(String prefix) => '$prefix-${_idCounter++}';
 
+  List<AppUser> get users => List.unmodifiable(_users);
+  AppUser? get currentUser => _currentUser;
+  bool get loading => _loading;
+  String? get error => _error;
+
   List<SocialAction> get actions => List.unmodifiable(_actions);
+
+  /// Ações criadas pelo organizador logado.
+  List<SocialAction> get myActions => _actions
+      .where((a) => a.organizerId == _currentUser?.id)
+      .toList(growable: false);
+
+  /// Organizador: inscrições nas suas ações. Morador: suas inscrições.
   List<Appointment> get appointments => List.unmodifiable(_appointments);
+
   List<AppNotification> get notifications => List.unmodifiable(
     _notifications.toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt)),
   );
@@ -25,131 +45,137 @@ class AppState extends ChangeNotifier {
   int get unreadNotificationsCount =>
       _notifications.where((n) => !n.read).length;
 
-  void _seedData() {
-    _actions.addAll([
-      SocialAction(
-        id: _nextId('action'),
-        title: 'Doação de Agasalhos',
-        description: 'Distribuição de roupas de frio para famílias cadastradas.',
-        location: 'Centro Comunitário - Bairro Esperança',
-        dateTime: DateTime.now().add(const Duration(days: 3)),
-        totalSlots: 20,
-        requiredDocuments: ['RG', 'Comprovante de residência'],
-      ),
-      SocialAction(
-        id: _nextId('action'),
-        title: 'Mutirão de Saúde',
-        description: 'Atendimento médico e odontológico gratuito.',
-        location: 'Posto de Saúde Central',
-        dateTime: DateTime.now().add(const Duration(days: 7)),
-        totalSlots: 15,
-        requiredDocuments: ['RG', 'Cartão SUS'],
-      ),
-      SocialAction(
-        id: _nextId('action'),
-        title: 'Cesta Básica Solidária',
-        description: 'Entrega de cestas básicas para famílias em vulnerabilidade.',
-        location: 'Igreja Nossa Senhora Aparecida',
-        dateTime: DateTime.now().add(const Duration(days: 1)),
-        totalSlots: 30,
-        requiredDocuments: ['RG', 'CPF', 'Comprovante de residência'],
-      ),
-    ]);
+  SocialAction? actionById(int id) {
+    for (final action in _actions) {
+      if (action.id == id) return action;
+    }
+    return null;
   }
 
-  SocialAction actionById(String id) => _actions.firstWhere((a) => a.id == id);
+  /// Inscrição confirmada do morador logado na ação, se houver.
+  Appointment? myAppointmentFor(int actionId) {
+    for (final appointment in _appointments) {
+      if (appointment.actionId == actionId &&
+          appointment.userId == _currentUser?.id &&
+          appointment.status == AppointmentStatus.confirmed) {
+        return appointment;
+      }
+    }
+    return null;
+  }
 
-  List<Appointment> appointmentsForAction(String actionId) =>
-      _appointments.where((a) => a.actionId == actionId).toList();
+  // Sessão
+  Future<void> loadUsers() => _run(() async {
+        _users = await api.fetchUsers();
+      });
+
+  Future<void> login(AppUser user) async {
+    _currentUser = user;
+    _actions = [];
+    _appointments = [];
+    _notifications.clear();
+    notifyListeners();
+    await refresh();
+  }
+
+  void logout() {
+    _currentUser = null;
+    _actions = [];
+    _appointments = [];
+    _notifications.clear();
+    notifyListeners();
+  }
+
+  /// Recarrega ações e inscrições do servidor.
+  Future<void> refresh() => _run(() async {
+        _actions = await api.fetchActions();
+        await _loadAppointments();
+      });
+
+  Future<void> _loadAppointments() async {
+    final user = _currentUser;
+    if (user == null) {
+      _appointments = [];
+    } else if (user.role == UserRole.morador) {
+      _appointments = await api.fetchRegistrations(userId: user.id);
+    } else {
+      final myActionIds = myActions.map((a) => a.id).toSet();
+      final all = await api.fetchRegistrations();
+      _appointments = all.where((r) => myActionIds.contains(r.actionId)).toList();
+    }
+  }
 
   // Organizador: Cadastrar ação social
-  void registerAction({
+  Future<void> registerAction({
     required String title,
     required String description,
     required String location,
     required DateTime dateTime,
     required int totalSlots,
     required List<String> requiredDocuments,
-  }) {
-    _actions.add(SocialAction(
-      id: _nextId('action'),
+  }) async {
+    await api.createAction(
+      organizerId: _currentUser!.id,
       title: title,
       description: description,
       location: location,
       dateTime: dateTime,
-      totalSlots: totalSlots,
-      requiredDocuments: requiredDocuments,
-    ));
-    notifyListeners();
+      vacancies: totalSlots,
+      docs: requiredDocuments,
+    );
+    await refresh();
   }
 
   // Organizador: Gerenciar vagas
-  void updateSlots(String actionId, int newTotalSlots) {
-    final action = actionById(actionId);
-    if (newTotalSlots < action.bookedSlots) {
-      newTotalSlots = action.bookedSlots;
-    }
-    final index = _actions.indexWhere((a) => a.id == actionId);
-    _actions[index] = SocialAction(
-      id: action.id,
-      title: action.title,
-      description: action.description,
-      location: action.location,
-      dateTime: action.dateTime,
-      totalSlots: newTotalSlots,
-      requiredDocuments: action.requiredDocuments,
-      bookedSlots: action.bookedSlots,
-    );
-    notifyListeners();
+  Future<void> updateSlots(int actionId, int newTotalSlots) async {
+    await api.updateVacancies(actionId, newTotalSlots);
+    await refresh();
   }
 
   // Morador: Verificar documentos (retorna quais faltam)
-  List<String> missingDocuments(String actionId, List<String> providedDocuments) {
-    final required = actionById(actionId).requiredDocuments;
-    return required
-        .where((doc) => !providedDocuments.contains(doc))
-        .toList();
+  List<String> missingDocuments(int actionId, List<String> providedDocuments) {
+    final required = actionById(actionId)?.requiredDocuments ?? const [];
+    return required.where((doc) => !providedDocuments.contains(doc)).toList();
   }
 
-  // Morador: Realizar agendamento (inclui verificação de documentos)
-  Appointment bookAppointment({
-    required String actionId,
-    required String moradorName,
+  /// Morador: Realizar agendamento (inclui verificação de documentos).
+  /// Só envia a inscrição ao servidor quando todos os documentos foram
+  /// confirmados. Retorna true se o agendamento foi confirmado.
+  Future<bool> bookAppointment({
+    required int actionId,
     required List<String> documentIds,
-  }) {
-    final action = actionById(actionId);
+  }) async {
+    final action = actionById(actionId)!;
     final missing = missingDocuments(actionId, documentIds);
-    final verified = missing.isEmpty;
 
-    final appointment = Appointment(
-      id: _nextId('appointment'),
-      actionId: actionId,
-      moradorName: moradorName,
-      documentIds: documentIds,
-      createdAt: DateTime.now(),
-      documentsVerified: verified,
-      status: verified ? AppointmentStatus.confirmed : AppointmentStatus.pending,
-    );
-
-    _appointments.add(appointment);
-
-    if (verified) {
-      final index = _actions.indexWhere((a) => a.id == actionId);
-      _actions[index].bookedSlots += 1;
-      _pushNotification(
-        title: 'Agendamento confirmado',
-        message: 'Seu agendamento para "${action.title}" foi confirmado.',
-      );
-    } else {
+    if (missing.isNotEmpty) {
       _pushNotification(
         title: 'Documentos pendentes',
         message:
             'Faltam documentos para confirmar "${action.title}": ${missing.join(', ')}.',
       );
+      notifyListeners();
+      return false;
     }
 
-    notifyListeners();
-    return appointment;
+    await api.createRegistration(userId: _currentUser!.id, actionId: actionId);
+    _pushNotification(
+      title: 'Agendamento confirmado',
+      message: 'Seu agendamento para "${action.title}" foi confirmado.',
+    );
+    await refresh();
+    return true;
+  }
+
+  // Morador: Cancelar agendamento
+  Future<void> cancelAppointment(int appointmentId) async {
+    final appointment = _appointments.firstWhere((a) => a.id == appointmentId);
+    await api.cancelRegistration(appointmentId);
+    _pushNotification(
+      title: 'Agendamento cancelado',
+      message: 'Seu agendamento para "${appointment.actionTitle}" foi cancelado.',
+    );
+    await refresh();
   }
 
   void _pushNotification({required String title, required String message}) {
@@ -172,5 +198,20 @@ class AppState extends ChangeNotifier {
       n.read = true;
     }
     notifyListeners();
+  }
+
+  // Executa uma carga do servidor guardando o estado de carregamento/erro
+  Future<void> _run(Future<void> Function() task) async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      await task();
+    } on ApiException catch (e) {
+      _error = e.message;
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
   }
 }

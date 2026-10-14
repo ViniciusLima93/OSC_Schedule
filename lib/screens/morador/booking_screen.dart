@@ -1,97 +1,93 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../models/appointment.dart';
 import '../../state/app_state.dart';
+import '../../widgets/remote_content.dart';
 
 class BookingScreen extends StatefulWidget {
   const BookingScreen({super.key, required this.actionId});
 
-  final String actionId;
+  final int actionId;
 
   @override
   State<BookingScreen> createState() => _BookingScreenState();
 }
 
 class _BookingScreenState extends State<BookingScreen> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController();
-  late Set<String> _confirmedDocuments;
-
-  @override
-  void initState() {
-    super.initState();
-    _confirmedDocuments = {};
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    super.dispose();
-  }
+  final Set<String> _confirmedDocuments = {};
+  bool _submitting = false;
 
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
     final action = appState.actionById(widget.actionId);
+    if (action == null) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: const Center(child: Text('Ação não encontrada.')),
+      );
+    }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Realizar agendamento')),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(action.title,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 16),
-            TextFormField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Nome completo',
-                border: OutlineInputBorder(),
-              ),
-              validator: (value) =>
-                  (value == null || value.trim().isEmpty) ? 'Informe seu nome' : null,
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(action.title,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Morador',
+              border: OutlineInputBorder(),
             ),
-            const SizedBox(height: 24),
-            const Text(
-              'Verificar documentos',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            child: Text(appState.currentUser?.name ?? ''),
+          ),
+          const SizedBox(height: 24),
+          const Text(
+            'Verificar documentos',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            action.requiredDocuments.isEmpty
+                ? 'Esta ação não exige documentos.'
+                : 'Confirme que você possui os documentos abaixo para concluir o agendamento.',
+            style: const TextStyle(color: Colors.grey),
+          ),
+          const SizedBox(height: 8),
+          ...action.requiredDocuments.map(
+            (doc) => CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(doc),
+              value: _confirmedDocuments.contains(doc),
+              onChanged: (checked) {
+                setState(() {
+                  if (checked == true) {
+                    _confirmedDocuments.add(doc);
+                  } else {
+                    _confirmedDocuments.remove(doc);
+                  }
+                });
+              },
             ),
-            const SizedBox(height: 4),
-            const Text(
-              'Confirme que você possui os documentos abaixo para concluir o agendamento.',
-              style: TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 8),
-            ...action.requiredDocuments.map(
-              (doc) => CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(doc),
-                value: _confirmedDocuments.contains(doc),
-                onChanged: (checked) {
-                  setState(() {
-                    if (checked == true) {
-                      _confirmedDocuments.add(doc);
-                    } else {
-                      _confirmedDocuments.remove(doc);
-                    }
-                  });
-                },
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: FilledButton(
-            onPressed: () => _submit(context, appState, action.requiredDocuments),
-            child: const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Text('Confirmar agendamento'),
+            onPressed: _submitting ? null : () => _submit(context, appState),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              child: _submitting
+                  ? const SizedBox(
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Confirmar agendamento'),
             ),
           ),
         ),
@@ -99,16 +95,21 @@ class _BookingScreenState extends State<BookingScreen> {
     );
   }
 
-  void _submit(BuildContext context, AppState appState, List<String> required) {
-    if (!_formKey.currentState!.validate()) return;
-
-    final appointment = appState.bookAppointment(
-      actionId: widget.actionId,
-      moradorName: _nameController.text.trim(),
-      documentIds: _confirmedDocuments.toList(),
-    );
-
-    final confirmed = appointment.status == AppointmentStatus.confirmed;
+  Future<void> _submit(BuildContext context, AppState appState) async {
+    setState(() => _submitting = true);
+    final bool confirmed;
+    try {
+      confirmed = await appState.bookAppointment(
+        actionId: widget.actionId,
+        documentIds: _confirmedDocuments.toList(),
+      );
+    } catch (e) {
+      if (context.mounted) showErrorSnackBar(context, e);
+      return;
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+    if (!context.mounted) return;
 
     showDialog(
       context: context,
