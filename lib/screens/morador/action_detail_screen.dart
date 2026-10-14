@@ -3,17 +3,26 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../state/app_state.dart';
+import '../../widgets/remote_content.dart';
 import 'booking_screen.dart';
 
 class ActionDetailScreen extends StatelessWidget {
   const ActionDetailScreen({super.key, required this.actionId});
 
-  final String actionId;
+  final int actionId;
 
   @override
   Widget build(BuildContext context) {
-    final action = context.watch<AppState>().actionById(actionId);
-    final dateFormat = DateFormat('dd/MM/yyyy');
+    final appState = context.watch<AppState>();
+    final action = appState.actionById(actionId);
+    if (action == null) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: const Center(child: Text('Ação não encontrada.')),
+      );
+    }
+    final myAppointment = appState.myAppointmentFor(actionId);
+    final dateFormat = DateFormat('dd/MM/yyyy HH:mm');
 
     return Scaffold(
       appBar: AppBar(title: Text(action.title)),
@@ -29,6 +38,11 @@ class ActionDetailScreen extends StatelessWidget {
             value: dateFormat.format(action.dateTime),
           ),
           _InfoRow(
+            icon: Icons.person_outline,
+            label: 'Organizador',
+            value: action.organizerName,
+          ),
+          _InfoRow(
             icon: Icons.event_seat,
             label: 'Vagas',
             value: '${action.bookedSlots}/${action.totalSlots} ocupadas',
@@ -39,6 +53,8 @@ class ActionDetailScreen extends StatelessWidget {
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
+          if (action.requiredDocuments.isEmpty)
+            const Text('Nenhum documento exigido.'),
           ...action.requiredDocuments.map(
             (doc) => ListTile(
               dense: true,
@@ -52,25 +68,62 @@ class ActionDetailScreen extends StatelessWidget {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: FilledButton.icon(
-            onPressed: action.isFull
-                ? null
-                : () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => BookingScreen(actionId: action.id),
-                      ),
-                    );
-                  },
-            icon: const Icon(Icons.event_available),
-            label: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              child: Text(action.isFull ? 'Vagas esgotadas' : 'Realizar agendamento'),
-            ),
-          ),
+          child: myAppointment != null
+              ? OutlinedButton.icon(
+                  onPressed: () => _cancel(context, myAppointment.id),
+                  icon: const Icon(Icons.event_busy),
+                  label: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text('Cancelar agendamento'),
+                  ),
+                )
+              : FilledButton.icon(
+                  onPressed: action.isFull
+                      ? null
+                      : () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => BookingScreen(actionId: action.id),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.event_available),
+                  label: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                        action.isFull ? 'Vagas esgotadas' : 'Realizar agendamento'),
+                  ),
+                ),
         ),
       ),
     );
+  }
+
+  Future<void> _cancel(BuildContext context, int appointmentId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Cancelar agendamento'),
+        content: const Text('Deseja mesmo cancelar sua inscrição nesta ação?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Não'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Sim, cancelar'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true || !context.mounted) return;
+
+    try {
+      await context.read<AppState>().cancelAppointment(appointmentId);
+    } catch (e) {
+      if (context.mounted) showErrorSnackBar(context, e);
+    }
   }
 }
 

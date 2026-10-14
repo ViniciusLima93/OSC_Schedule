@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../../models/appointment.dart';
 import '../../state/app_state.dart';
+import '../../widgets/remote_content.dart';
 
 class ViewAppointmentsScreen extends StatelessWidget {
   const ViewAppointmentsScreen({super.key});
@@ -16,33 +17,44 @@ class ViewAppointmentsScreen extends StatelessWidget {
     final dateFormat = DateFormat('dd/MM/yyyy HH:mm');
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Visualizar agendamentos')),
-      body: appointments.isEmpty
-          ? const Center(child: Text('Nenhum agendamento realizado ainda.'))
-          : ListView.separated(
-              padding: const EdgeInsets.all(16),
-              itemCount: appointments.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, index) {
-                final appointment = appointments[index];
-                final action = appState.actionById(appointment.actionId);
-                return Card(
-                  child: ListTile(
-                    title: Text(appointment.moradorName),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(action.title),
-                        Text(dateFormat.format(appointment.createdAt),
-                            style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      ],
-                    ),
-                    trailing: _StatusChip(status: appointment.status),
-                    isThreeLine: true,
-                  ),
-                );
-              },
-            ),
+      appBar: AppBar(
+        title: const Text('Visualizar agendamentos'),
+        actions: [
+          IconButton(
+            tooltip: 'Atualizar',
+            onPressed: appState.refresh,
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
+      ),
+      body: RemoteContent(
+        isEmpty: appointments.isEmpty,
+        emptyMessage: 'Nenhum agendamento realizado ainda.',
+        child: ListView.separated(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          itemCount: appointments.length,
+          separatorBuilder: (_, _) => const SizedBox(height: 12),
+          itemBuilder: (context, index) {
+            final appointment = appointments[index];
+            return Card(
+              child: ListTile(
+                title: Text(appointment.moradorName),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(appointment.actionTitle),
+                    Text(dateFormat.format(appointment.createdAt),
+                        style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                  ],
+                ),
+                trailing: _StatusChip(status: appointment.status),
+                isThreeLine: true,
+              ),
+            );
+          },
+        ),
+      ),
     );
   }
 }
@@ -54,22 +66,10 @@ class _StatusChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    late final String label;
-    late final Color color;
-    switch (status) {
-      case AppointmentStatus.confirmed:
-        label = 'Confirmado';
-        color = Colors.teal;
-        break;
-      case AppointmentStatus.pending:
-        label = 'Pendente';
-        color = Colors.orange;
-        break;
-      case AppointmentStatus.cancelled:
-        label = 'Cancelado';
-        color = Colors.red;
-        break;
-    }
+    final (label, color) = switch (status) {
+      AppointmentStatus.confirmed => ('Confirmado', Colors.teal),
+      AppointmentStatus.cancelled => ('Cancelado', Colors.red),
+    };
     return Chip(
       label: Text(label, style: TextStyle(color: color, fontSize: 12)),
       backgroundColor: color.withValues(alpha: 0.1),
